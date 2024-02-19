@@ -1819,7 +1819,8 @@ bool call::next()
     /* Default without branching: use the next message */
     int new_msg_index = msg_index + 1;
     /* If branch needed, overwrite this default */
-    if (msg_index >= 0 && ((*msgs)[msg_index]->next >= 0) &&
+    if (msg_index >= 0 && (msg_index < (int)((*msgs).size())) && 
+            ((*msgs)[msg_index]->next >= 0) &&
             (((test = ((*msgs)[msg_index]->test)) == -1) ||
              M_callVariableTable->getVar(test)->isSet())) {
         /* Branching possible, check the probability */
@@ -6076,12 +6077,15 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                    (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_VIDEO) ||
                    (currentAction->getActionType() == CAction::E_AT_PLAY_DTMF)) {
             play_args_t* play_args = 0;
-            if ((currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_AUDIO) ||
-                (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_IMAGE) ||
-                (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_VIDEO)) {
-                const char *fileName = createSendingMessage(currentAction->getMessage());
-                currentAction->setPcapArgs(fileName);
-            }
+
+            // existing media thread could be using play_args, so we have to kill it before modifying parameters
+            if (media_thread != 0) {
+                // If a media_thread is already active, kill it before starting a new one
+                pthread_cancel(media_thread);
+                pthread_join(media_thread, NULL);
+                media_thread = 0;
+            } 
+            
             if ((currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_AUDIO) ||
                 (currentAction->getActionType() == CAction::E_AT_PLAY_DTMF)) {
                 play_args = &(this->play_args_a);
@@ -6093,22 +6097,19 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                 ERROR("Can't find pcap data to play");
             }
 
-            // existing media thread could be using play_args, so we have to kill it before modifying parameters
-            if (media_thread != 0) {
-                // If a media_thread is already active, kill it before starting a new one
-                pthread_cancel(media_thread);
-                pthread_join(media_thread, NULL);
-                media_thread = 0;
+            if ((currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_AUDIO) ||
+                (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_IMAGE) ||
+                (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_VIDEO)) {
+                const char *fileName = createSendingMessage(currentAction->getMessage());
+                play_args->last_seq_no += currentAction->setPcapArgs(fileName, play_args->last_seq_no, (uint32_t)(clock_tick - start_time));
+                play_args->pcap = currentAction->getPcapPkts();
+                play_args->free_pcap_when_done = 0;
             }
-
-            if (currentAction->getActionType() == CAction::E_AT_PLAY_DTMF) {
+            else if (currentAction->getActionType() == CAction::E_AT_PLAY_DTMF) {
                 char* digits = createSendingMessage(currentAction->getMessage());
                 play_args->pcap = (pcap_pkts *) malloc(sizeof(pcap_pkts));
                 play_args->last_seq_no += parse_dtmf_play_args(digits, play_args->pcap, play_args->last_seq_no);
                 play_args->free_pcap_when_done = 1;
-            } else {
-                play_args->pcap = currentAction->getPcapPkts();
-                play_args->free_pcap_when_done = 0;
             }
 
             /* port number is set in [auto_]media_port interpolation */
@@ -6127,7 +6128,10 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
 #ifndef PTHREAD_STACK_MIN
 #define PTHREAD_STACK_MIN  16384
 #endif
-            int ret = pthread_create(&media_thread, &attr, send_wrapper, play_args);
+            // Make a copy of the args to pass to the thread.
+            play_args_t* play_args_copy = (play_args_t*) malloc(sizeof(play_args_t));
+            memcpy(play_args_copy, play_args, sizeof(play_args_t));
+            int ret = pthread_create(&media_thread, &attr, send_wrapper, play_args_copy);
             if (ret) {
                 ERROR("Can't create thread to send RTP packets");
             }

@@ -530,8 +530,10 @@ void CAction::setPcapArgs (pcap_pkts  *  P_value)
     }
 }
 
-void CAction::setPcapArgs(const char* P_value)
+int CAction::setPcapArgs(const char* P_value, uint16_t start_seq_no, uint32_t time_offset)
 {
+    int res = 0;
+
     if (M_pcapArgs != NULL) {
         free(M_pcapArgs);
         M_pcapArgs = NULL;
@@ -539,13 +541,17 @@ void CAction::setPcapArgs(const char* P_value)
 
     if (P_value != NULL) {
         M_pcapArgs = (pcap_pkts *) malloc(sizeof(*M_pcapArgs));
-        if (parse_play_args(P_value, M_pcapArgs) == -1) {
+        res = parse_play_args(P_value, M_pcapArgs, start_seq_no, time_offset);
+
+        if (res <= 0) {
             ERROR("Play pcap error");
         }
         if (access(M_pcapArgs->file, F_OK)) {
             ERROR("Cannot read file %s", M_pcapArgs->file);
         }
     }
+
+    return res;
 }
 #endif
 

@@ -170,8 +170,8 @@ public:
     void setDoubleValue  (double         P_value);  /* assign value specific function  */
     void setStringValue  (char *         P_value);  /* strcmp value specific function  */
 #ifdef PCAPPLAY
-    void setPcapArgs(const char* P_value);          /* send_packets specific function */
-    void setPcapArgs     (pcap_pkts   *  P_value);  /* send_packets specific function */
+    int  setPcapArgs     (const char* P_value, uint16_t start_seq_no, uint32_t time_offset);          /* send_packets specific function */
+    void setPcapArgs     (pcap_pkts* P_value);  /* send_packets specific function */
 #endif
     void setRTPEchoActInfo(const char* P_value);  /* parses rtp echo params from string */
     void setRTPEchoActInfo(rtpecho_actinfo_t* P_value);  /* copy stored rtp echo params */

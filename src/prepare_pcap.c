@@ -181,7 +181,7 @@ size_t get_ethertype_offset(int link, const uint8_t* pktdata)
 
 /* prepare a pcap file
  */
-int prepare_pkts(const char* file, pcap_pkts* pkts)
+int prepare_pkts(const char* file, pcap_pkts* pkts, uint16_t start_seq_no, uint32_t time_offset)
 {
     pcap_t* pcap;
 #ifdef HAVE_PCAP_NEXT_EX
@@ -265,14 +265,32 @@ int prepare_pkts(const char* file, pcap_pkts* pkts)
         pkt_index->data = (unsigned char *) malloc(pktlen); /* BUG: inefficient */
         if (!pkt_index->data)
             ERROR("Can't allocate memory for pcap pkt data");
-        memcpy(pkt_index->data, udphdr, pktlen);
-
         udphdr->uh_sum = 0;
+        memcpy(pkt_index->data, udphdr, pktlen);
+        const u_char seq_index = sizeof(udphdr) + sizeof(u_char) + sizeof(u_char);
+        const u_char ts_index = seq_index + sizeof(uint16_t); 
+        uint16_t this_seq;
+        memcpy(&this_seq, &pkt_index->data[10], sizeof(uint16_t));
+        this_seq = ntohs(this_seq);
+        this_seq = htons(start_seq_no++);
+        memcpy(&pkt_index->data[seq_index], &this_seq, sizeof(uint16_t));
 
+        // Now sort out the timestamp.
+        uint32_t tmp;
+        memcpy(&tmp, &pkt_index->data[ts_index], sizeof(uint32_t));
+        uint32_t ts = htonl(tmp);
+
+        // Add the offset for these packets.
+        ts += time_offset * 8; // 8 khz TODO: get the frequency from the pcap file?
+
+        tmp = ntohl(ts);
+        memcpy(&pkt_index->data[ts_index], &tmp, sizeof(uint32_t));
         /* compute a partial udp checksum */
         /* not including port that will be changed */
-        /* when sending RTP */
-        pkt_index->partial_check = check((uint16_t*)&udphdr->uh_ulen, pktlen - 4) + ntohs(IPPROTO_UDP + pktlen);
+        /* when sending RTP, offset starts the checksum after the two ports. */
+        unsigned offset = (unsigned)((void*)&udphdr->uh_ulen - (void*)udphdr);
+        pkt_index->partial_check = check((uint16_t*)(pkt_index->data + offset), pktlen - 4) + ntohs(IPPROTO_UDP + pktlen);
+
         if (max_length < pktlen)
             max_length = pktlen;
         if (base > ntohs(udphdr->uh_dport))
@@ -284,7 +302,7 @@ int prepare_pkts(const char* file, pcap_pkts* pkts)
     pkts->base = base;
     pcap_close(pcap);
 
-    return 0;
+    return n_pkts;
 }
 
 struct rtphdr {

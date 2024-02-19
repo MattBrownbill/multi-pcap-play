@@ -93,11 +93,10 @@ float2timer(float time, struct timeval *tvp)
     tvp->tv_usec = n * 100000;
 }
 
-int parse_play_args(const char* filename, pcap_pkts* pkts)
+int parse_play_args(const char* filename, pcap_pkts* pkts, uint16_t start_seq_no, uint32_t time_offset)
 {
     pkts->file = find_file(filename);
-    prepare_pkts(pkts->file, pkts);
-    return 1;
+    return prepare_pkts(pkts->file, pkts, start_seq_no, time_offset);
 }
 
 void free_pcaps(pcap_pkts* pkts)
@@ -137,11 +136,20 @@ void send_packets_pcap_cleanup(void* arg)
         free(play_args->pcap);
         play_args->pcap = NULL;
     }
+
+    free (play_args);
 }
 
 void send_packets(play_args_t* play_args)
 {
+    unsigned long packets = play_args->pcap->max - play_args->pcap->pkts;
+    void* sav_pkts = play_args->pcap->pkts;
+    void* sav_max = play_args->pcap->max;
     pthread_cleanup_push(send_packets_pcap_cleanup, ((void*)play_args));
+    if (packets > PCAP_MAXPACKET) {
+        ERROR("%016llx Packet count is too big (%lu > %d)", (long long unsigned int)pthread_self(), packets, PCAP_MAXPACKET);
+        goto pop2;
+    }
 
     int ret = 0, sock, port_diff;
     pcap_pkt *pkt_index, *pkt_max;
